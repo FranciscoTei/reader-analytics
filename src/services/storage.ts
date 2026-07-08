@@ -113,6 +113,19 @@ export function addHighlight(highlight: HighlightRecord) {
   saveHighlights(highlights);
 }
 
+export function removeHighlightsByToken(bookId: string, pageId: string, sentenceIndex: number, wordIndex: number) {
+  const highlights = getHighlights().filter(
+    (highlight) =>
+      !(
+        highlight.bookId === bookId &&
+        highlight.pageId === pageId &&
+        highlight.sentenceIndex === sentenceIndex &&
+        highlight.wordIndex === wordIndex
+      ),
+  );
+  saveHighlights(highlights);
+}
+
 export function getDictionary() {
   return readJson<Record<string, WordDictionaryEntry>>(storageKeys.dictionary, {});
 }

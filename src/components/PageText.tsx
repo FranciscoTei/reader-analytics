@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useRef, useState } from 'react';
+import type { PointerEvent } from 'react';
 import { HighlightRecord, StoredPageContent } from '../models/types';
 import { tokenizeWords } from '../utils/text';
 
@@ -14,6 +15,77 @@ interface PageTextProps {
   blurred: boolean;
 }
 
+interface WordTokenProps {
+  chunk: string;
+  word: string;
+  sentence: string;
+  sentenceIndex: number;
+  wordIndex: number;
+  highlighted: boolean;
+  onWordPress: PageTextProps['onWordPress'];
+}
+
+function WordToken({ chunk, word, sentence, sentenceIndex, wordIndex, highlighted, onWordPress }: WordTokenProps) {
+  const startRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const [pressed, setPressed] = useState(false);
+
+  function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    startRef.current = { x: event.clientX, y: event.clientY, moved: false };
+    setPressed(true);
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLButtonElement>) {
+    const start = startRef.current;
+    if (!start) {
+      return;
+    }
+
+    const deltaX = Math.abs(event.clientX - start.x);
+    const deltaY = Math.abs(event.clientY - start.y);
+    if (deltaX > 8 || deltaY > 8) {
+      start.moved = true;
+      setPressed(false);
+    }
+  }
+
+  function finishPointer() {
+    const start = startRef.current;
+    startRef.current = null;
+
+    if (!start || start.moved) {
+      setPressed(false);
+      return;
+    }
+
+    setPressed(false);
+    onWordPress({
+      word,
+      sentence,
+      sentenceIndex,
+      wordIndex,
+    });
+  }
+
+  function cancelPointer() {
+    startRef.current = null;
+    setPressed(false);
+  }
+
+  return (
+    <button
+      type="button"
+      className={`word-token ${highlighted ? 'is-highlighted' : ''} ${pressed ? 'is-pressed' : ''}`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPointer}
+      onPointerCancel={cancelPointer}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <span className="word-token-label">{chunk}</span>
+    </button>
+  );
+}
+
 export function PageText({ page, highlights, onWordPress, blurred }: PageTextProps) {
   const highlightedTokens = new Set(
     highlights
@@ -21,64 +93,36 @@ export function PageText({ page, highlights, onWordPress, blurred }: PageTextPro
       .map((highlight) => `${highlight.sentenceIndex}:${highlight.wordIndex}`),
   );
 
-  const dialogueStart = /^["'“”‘’\-–—]/;
-
   return (
     <article className={`reader-page-text ${blurred ? 'is-blurred' : ''}`} lang="pt-BR">
       {page.sentences.map((paragraph, sentenceIndex) => {
-        const lines = paragraph.split(/\n+/).filter(Boolean);
+        const words = tokenizeWords(paragraph);
+        let globalWordIndex = 0;
 
         return (
           <p key={`${page.id}-${sentenceIndex}`} className="reader-paragraph">
-            {lines.flatMap((line, lineIndex) => {
-              const words = tokenizeWords(line);
-              let globalIndex = 0;
-              const parts: ReactNode[] = [];
-
-              if (lineIndex > 0 || (sentenceIndex > 0 && dialogueStart.test(line.trim()))) {
-                parts.push(<br key={`${page.id}-${sentenceIndex}-${lineIndex}-break`} />);
+            {paragraph.split(/(\s+)/).map((chunk, chunkIndex) => {
+              if (!chunk.trim()) {
+                return <span key={`${page.id}-${sentenceIndex}-${chunkIndex}`}>{chunk}</span>;
               }
 
-              line.split(/(\s+)/).forEach((chunk, chunkIndex) => {
-                if (!chunk.trim()) {
-                  parts.push(
-                    <span key={`${sentenceIndex}-${lineIndex}-${chunkIndex}-space`} className="word-space">
-                      {chunk}
-                    </span>,
-                  );
-                  return;
-                }
+              const word = words[globalWordIndex] ?? chunk;
+              const wordIndex = globalWordIndex;
+              globalWordIndex += 1;
+              const highlighted = highlightedTokens.has(`${sentenceIndex}:${wordIndex}`);
 
-                const word = words[globalIndex] ?? chunk;
-                const wordIndex = globalIndex;
-                const key = `${sentenceIndex}:${wordIndex}`;
-                const highlighted = highlightedTokens.has(key);
-                parts.push(
-                  <button
-                    key={`${sentenceIndex}-${lineIndex}-${wordIndex}`}
-                    type="button"
-                    className={`word-token ${highlighted ? 'is-highlighted' : ''}`}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      onWordPress({
-                        word,
-                        sentence: paragraph,
-                        sentenceIndex,
-                        wordIndex,
-                      });
-                    }}
-                  >
-                    {chunk}
-                  </button>,
-                );
-                globalIndex += 1;
-              });
-
-              if (lineIndex < lines.length - 1) {
-                parts.push(<span key={`${sentenceIndex}-${lineIndex}-separator`} className="word-space"> </span>);
-              }
-
-              return parts;
+              return (
+                <WordToken
+                  key={`${page.id}-${sentenceIndex}-${chunkIndex}`}
+                  chunk={chunk}
+                  word={word}
+                  sentence={paragraph}
+                  sentenceIndex={sentenceIndex}
+                  wordIndex={wordIndex}
+                  highlighted={highlighted}
+                  onWordPress={onWordPress}
+                />
+              );
             })}
           </p>
         );

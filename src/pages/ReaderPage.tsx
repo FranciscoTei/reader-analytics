@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PageText } from '../components/PageText';
 import { HighlightRecord, StoredBook, StoredPageContent } from '../models/types';
-import { extractEpubBook } from '../services/epub';
+import { extractEpubBook, PAGINATION_VERSION } from '../services/epub';
 import { refreshDerivedStores } from '../services/analyticsSync';
 import {
   addHighlight,
@@ -10,11 +10,11 @@ import {
   getBooks,
   getHighlights,
   getPagesForBook,
+  removeHighlightsByToken,
   saveBooks,
   upsertBookPages,
   updateBookProgress,
 } from '../services/storage';
-import { PAGINATION_VERSION } from '../services/epub';
 import { formatPercent, getDayKey, nowIso, toLocalDateParts } from '../utils/date';
 import { normalizeWord } from '../utils/text';
 
@@ -23,7 +23,6 @@ interface RuntimeState {
   accumulatedMs: number;
   pauses: number;
   active: boolean;
-  pauseTimer: number | null;
 }
 
 function createRuntimeState(): RuntimeState {
@@ -32,7 +31,6 @@ function createRuntimeState(): RuntimeState {
     accumulatedMs: 0,
     pauses: 0,
     active: false,
-    pauseTimer: null,
   };
 }
 
@@ -48,7 +46,7 @@ export function ReaderPage() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [holding, setHolding] = useState(false);
+  const [isTextVisible, setIsTextVisible] = useState(false);
   const runtimeRef = useRef<RuntimeState>(createRuntimeState());
 
   const currentPage = pages[currentPageIndex];
@@ -90,6 +88,10 @@ export function ReaderPage() {
       setPages(loadedPages);
       setCurrentPageIndex(loadedBook.currentPageIndex || 0);
       setHighlights(getHighlights().filter((item) => item.bookId === livro));
+      runtimeRef.current.startedAt = Date.now();
+      runtimeRef.current.active = true;
+      runtimeRef.current.accumulatedMs = 0;
+      runtimeRef.current.pauses = 0;
       setLoading(false);
     }
 
@@ -101,9 +103,6 @@ export function ReaderPage() {
 
   useEffect(() => {
     return () => {
-      if (runtimeRef.current.pauseTimer) {
-        window.clearTimeout(runtimeRef.current.pauseTimer);
-      }
       void commitCurrentSession('unload');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,7 +133,7 @@ export function ReaderPage() {
     [highlights, currentPage?.id],
   );
 
-  async function commitCurrentSession(reason: 'pause' | 'page-change' | 'unload') {
+  async function commitCurrentSession(reason: 'page-change' | 'unload') {
     const runtime = runtimeRef.current;
     if (!book || !currentPage || !runtime.active || runtime.startedAt === null) {
       return;
@@ -155,7 +154,7 @@ export function ReaderPage() {
       wordCount: currentPage.wordCount,
       charCount: currentPage.charCount,
       durationMs,
-      pauses: reason === 'pause' ? runtime.pauses + 1 : runtime.pauses,
+      pauses: runtime.pauses,
       highlightsCount: pageHighlights.length,
       startedAt: new Date(runtime.startedAt).toISOString(),
       endedAt: new Date(endAt).toISOString(),
@@ -176,50 +175,7 @@ export function ReaderPage() {
     runtime.startedAt = null;
     runtime.active = false;
     runtime.pauses = 0;
-    setHolding(false);
     refreshDerivedStores();
-  }
-
-  function startHolding() {
-    if (!currentPage) {
-      return;
-    }
-
-    if (runtimeRef.current.pauseTimer) {
-      window.clearTimeout(runtimeRef.current.pauseTimer);
-      runtimeRef.current.pauseTimer = null;
-    }
-
-    if (!runtimeRef.current.active) {
-      runtimeRef.current.startedAt = Date.now();
-      runtimeRef.current.active = true;
-      runtimeRef.current.pauses = runtimeRef.current.pauses;
-    } else if (runtimeRef.current.startedAt === null) {
-      runtimeRef.current.startedAt = Date.now();
-    }
-
-    setHolding(true);
-  }
-
-  function schedulePause() {
-    const tolerance = 500;
-    if (runtimeRef.current.pauseTimer) {
-      window.clearTimeout(runtimeRef.current.pauseTimer);
-    }
-
-    runtimeRef.current.pauseTimer = window.setTimeout(() => {
-      runtimeRef.current.pauses += 1;
-      void commitCurrentSession('pause');
-      runtimeRef.current.pauseTimer = null;
-    }, tolerance);
-  }
-
-  function stopHolding() {
-    if (!runtimeRef.current.active) {
-      return;
-    }
-
-    schedulePause();
   }
 
   function goToPage(nextIndex: number) {
@@ -229,6 +185,9 @@ export function ReaderPage() {
 
     void commitCurrentSession('page-change');
     setCurrentPageIndex(nextIndex);
+    runtimeRef.current.startedAt = Date.now();
+    runtimeRef.current.active = true;
+    runtimeRef.current.pauses = 0;
     updateBookProgress(book?.id ?? '', {
       currentPageIndex: nextIndex,
       progress: pages.length > 0 ? (nextIndex + 1) / pages.length : 0,
@@ -243,6 +202,31 @@ export function ReaderPage() {
     wordIndex: number;
   }) {
     if (!book || !currentPage) {
+      return;
+    }
+
+    const existingHighlight = highlights.find(
+      (highlight) =>
+        highlight.bookId === book.id &&
+        highlight.pageId === currentPage.id &&
+        highlight.sentenceIndex === payload.sentenceIndex &&
+        highlight.wordIndex === payload.wordIndex,
+    );
+
+    if (existingHighlight) {
+      removeHighlightsByToken(book.id, currentPage.id, payload.sentenceIndex, payload.wordIndex);
+      setHighlights((items) =>
+        items.filter(
+          (highlight) =>
+            !(
+              highlight.bookId === book.id &&
+              highlight.pageId === currentPage.id &&
+              highlight.sentenceIndex === payload.sentenceIndex &&
+              highlight.wordIndex === payload.wordIndex
+            ),
+        ),
+      );
+      refreshDerivedStores();
       return;
     }
 
@@ -287,22 +271,29 @@ export function ReaderPage() {
   return (
     <main className="page-shell reader-shell">
       <article className="reader-canvas">
-        <PageText page={currentPage} highlights={highlights} onWordPress={handleWordPress} blurred={!holding} />
+        <PageText page={currentPage} highlights={highlights} onWordPress={handleWordPress} blurred={!isTextVisible} />
       </article>
 
       <footer className="reader-bottom-bar">
         <div className="reader-bar-left">
           <button
             type="button"
-            className={`reader-hold-button ${holding ? 'is-holding' : ''}`}
-            onPointerDown={startHolding}
-            onPointerUp={stopHolding}
-            onPointerLeave={stopHolding}
-            onPointerCancel={stopHolding}
-            onContextMenu={(event) => event.preventDefault()}
-            title={holding ? 'Solte para pausar' : 'Segure para ler'}
+            className={`reader-toggle-button ${isTextVisible ? 'is-visible' : 'is-hidden'}`}
+            onClick={() => setIsTextVisible((value) => !value)}
+            aria-pressed={isTextVisible}
+            title={isTextVisible ? 'Embaçar texto' : 'Mostrar texto'}
           >
-            <span aria-hidden="true">◔</span>
+            <span className="reader-toggle-icon" aria-hidden="true">
+              {isTextVisible ? (
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M12 5c5.2 0 9.7 3.2 11.5 7-1.8 3.8-6.3 7-11.5 7S2.3 15.8.5 12C2.3 8.2 6.8 5 12 5Zm0 2c-4 0-7.5 2.4-9 5 1.5 2.6 5 5 9 5s7.5-2.4 9-5c-1.5-2.6-5-5-9-5Zm0 2.5A2.5 2.5 0 1 1 12 14a2.5 2.5 0 0 1 0-5Z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M2.3 4.7 19.3 21.7l-1.4 1.4-3.1-3.1c-1.5.5-2.9.7-4.8.7C4.8 20.7.3 16.8.5 12c.1-1.2.4-2.3 1-3.4L.9 7.9l1.4-1.4ZM7.2 9.6 8.8 11.2A3.5 3.5 0 0 0 12 16.5c.5 0 1.1-.1 1.6-.3l-1.7-1.7A2.5 2.5 0 0 1 9.5 11c0-.5.1-1 .3-1.4L7.2 7.1c-.6.7-1 1.6-1 2.5 0 .7.2 1.7 1 2.7 1.4 1.8 3.8 3.4 4.8 3.4.7 0 1.4-.1 2.1-.3L12.8 13c-1.1-.1-2-.9-2.2-2l-3.4-3.4Zm4.8-2.1c.4 0 .9 0 1.4.1L16 9.2c.5.7.8 1.5.8 2.6 0 1.3-.5 2.5-1.4 3.5l1.4 1.4c1.4-1.4 2.1-3 2.1-4.9 0-2-.8-3.7-2.5-5.2-1.4-1.2-3.3-2-5.5-2-.8 0-1.6.1-2.4.3l1.5 1.5c.8-.2 1.5-.3 2.1-.3Z" />
+                </svg>
+              )}
+            </span>
           </button>
 
           <button
@@ -328,7 +319,9 @@ export function ReaderPage() {
 
         <div className="reader-bar-right">
           <div className="reader-page-info">
-            <div className="reader-page-number">{currentPageIndex + 1} / {pages.length}</div>
+            <div className="reader-page-number">
+              {currentPageIndex + 1} / {pages.length}
+            </div>
             <div className="reader-progress">{formatPercent(progress)}</div>
           </div>
         </div>

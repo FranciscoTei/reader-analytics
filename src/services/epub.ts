@@ -4,10 +4,10 @@ import { nowIso } from '../utils/date';
 
 // === Configurações de visualização === //
 // Ajuste estes valores para mudar a aparência da leitura
-export const PAGINATION_VERSION = 5;
+export const PAGINATION_VERSION = 6;
 export const READER_CONFIG = {
   // Número de palavras por página (afeta quanto texto é mostrado)
-  wordsPerPage: 130,
+  wordsPerPage: 300,
 };
 // === Fim das configurações === //
 
