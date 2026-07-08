@@ -64,7 +64,7 @@ export function ReaderPage() {
       let loadedPages = getPagesForBook(livro);
 
       if (!loadedBook || loadedPages.length === 0) {
-        const catalogResponse = await fetch('/livros/index.json');
+        const catalogResponse = await fetch(`${import.meta.env.BASE_URL}livros/index.json`);
         const catalog = (await catalogResponse.json()) as { id: string; file: string }[];
         const entry = catalog.find((item) => item.id === livro);
 

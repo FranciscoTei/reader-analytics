@@ -304,9 +304,10 @@ export function createFallbackCover(title: string) {
 }
 
 export async function extractEpubBook(entry: CatalogBook): Promise<BookExtractionResult> {
+  const baseUrl = import.meta.env.BASE_URL;
   const candidatePaths = [
-    `/epubs/${encodeURI(entry.file)}`,
-    `/livros/${encodeURI(entry.file)}`,
+    `${baseUrl}epubs/${encodeURI(entry.file)}`,
+    `${baseUrl}livros/${encodeURI(entry.file)}`,
   ];
 
   let zip: ZipEntries | null = null;

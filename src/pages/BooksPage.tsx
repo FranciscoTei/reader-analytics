@@ -7,7 +7,7 @@ import { clearBookProgress, getBooks, getPagesForBook, saveBooks, upsertBookPage
 import { formatDuration, formatLocalDateTime, formatPercent } from '../utils/date';
 
 async function fetchCatalog() {
-  const response = await fetch('/livros/index.json');
+  const response = await fetch(`${import.meta.env.BASE_URL}livros/index.json`);
   if (!response.ok) {
     return [] as CatalogBook[];
   }
