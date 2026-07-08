@@ -10,7 +10,9 @@ export function normalizeText(text: string) {
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
-    .replace(/\s+/g, ' ')
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .join('\n')
     .trim();
 }
 
@@ -32,25 +34,9 @@ export function splitIntoSentences(text: string) {
     return [];
   }
 
-  const SegmenterCtor = (Intl as typeof Intl & {
-    Segmenter?: new (
-      locale: string,
-      options: { granularity: 'sentence' },
-    ) => {
-      segment(input: string): Iterable<{ segment: string }>;
-    };
-  }).Segmenter;
-
-  if (SegmenterCtor) {
-    const segmenter = new SegmenterCtor('pt-BR', { granularity: 'sentence' });
-    return Array.from(segmenter.segment(cleanText))
-      .map((segment: { segment: string }) => segment.segment.trim())
-      .filter(Boolean);
-  }
-
   return cleanText
-    .split(/(?<=[.!?…])\s+/)
-    .map((sentence) => sentence.trim())
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
     .filter(Boolean);
 }
 
@@ -77,5 +63,5 @@ export function extractFirstHeading(document: Document | null | undefined) {
 }
 
 export function createPageText(sentences: string[]) {
-  return sentences.join(' ').replace(/\s+/g, ' ').trim();
+  return sentences.join('\n\n').trim();
 }

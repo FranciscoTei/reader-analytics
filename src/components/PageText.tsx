@@ -21,51 +21,65 @@ export function PageText({ page, highlights, onWordPress, blurred }: PageTextPro
       .map((highlight) => `${highlight.sentenceIndex}:${highlight.wordIndex}`),
   );
 
+  const dialogueStart = /^["'“”‘’\-–—]/;
+
   return (
     <article className={`reader-page-text ${blurred ? 'is-blurred' : ''}`} lang="pt-BR">
-      {page.sentences.map((sentence, sentenceIndex) => {
-        const words = tokenizeWords(sentence);
-        let globalIndex = 0;
-        const parts: ReactNode[] = [];
-
-        sentence.split(/(\s+)/).forEach((chunk, chunkIndex) => {
-          if (!chunk.trim()) {
-            parts.push(
-              <span key={`${sentenceIndex}-${chunkIndex}-space`} className="word-space">
-                {chunk}
-              </span>,
-            );
-            return;
-          }
-
-          const word = words[globalIndex] ?? chunk;
-          const wordIndex = globalIndex;
-          const key = `${sentenceIndex}:${wordIndex}`;
-          const highlighted = highlightedTokens.has(key);
-          parts.push(
-            <button
-              key={`${sentenceIndex}-${wordIndex}`}
-              type="button"
-              className={`word-token ${highlighted ? 'is-highlighted' : ''}`}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                onWordPress({
-                  word,
-                  sentence,
-                  sentenceIndex,
-                  wordIndex,
-                });
-              }}
-            >
-              {chunk}
-            </button>,
-          );
-          globalIndex += 1;
-        });
+      {page.sentences.map((paragraph, sentenceIndex) => {
+        const lines = paragraph.split(/\n+/).filter(Boolean);
 
         return (
           <p key={`${page.id}-${sentenceIndex}`} className="reader-paragraph">
-            {parts}
+            {lines.flatMap((line, lineIndex) => {
+              const words = tokenizeWords(line);
+              let globalIndex = 0;
+              const parts: ReactNode[] = [];
+
+              if (lineIndex > 0 || (sentenceIndex > 0 && dialogueStart.test(line.trim()))) {
+                parts.push(<br key={`${page.id}-${sentenceIndex}-${lineIndex}-break`} />);
+              }
+
+              line.split(/(\s+)/).forEach((chunk, chunkIndex) => {
+                if (!chunk.trim()) {
+                  parts.push(
+                    <span key={`${sentenceIndex}-${lineIndex}-${chunkIndex}-space`} className="word-space">
+                      {chunk}
+                    </span>,
+                  );
+                  return;
+                }
+
+                const word = words[globalIndex] ?? chunk;
+                const wordIndex = globalIndex;
+                const key = `${sentenceIndex}:${wordIndex}`;
+                const highlighted = highlightedTokens.has(key);
+                parts.push(
+                  <button
+                    key={`${sentenceIndex}-${lineIndex}-${wordIndex}`}
+                    type="button"
+                    className={`word-token ${highlighted ? 'is-highlighted' : ''}`}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      onWordPress({
+                        word,
+                        sentence: paragraph,
+                        sentenceIndex,
+                        wordIndex,
+                      });
+                    }}
+                  >
+                    {chunk}
+                  </button>,
+                );
+                globalIndex += 1;
+              });
+
+              if (lineIndex < lines.length - 1) {
+                parts.push(<span key={`${sentenceIndex}-${lineIndex}-separator`} className="word-space"> </span>);
+              }
+
+              return parts;
+            })}
           </p>
         );
       })}

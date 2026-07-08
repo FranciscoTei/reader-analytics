@@ -22,6 +22,7 @@ export interface StoredBook {
   title: string;
   author: string;
   cover?: string;
+  paginationVersion?: number;
   totalPages: number;
   currentPageIndex: number;
   progress: number;

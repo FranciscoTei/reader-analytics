@@ -4,9 +4,10 @@ import { nowIso } from '../utils/date';
 
 // === Configurações de visualização === //
 // Ajuste estes valores para mudar a aparência da leitura
+export const PAGINATION_VERSION = 5;
 export const READER_CONFIG = {
   // Número de palavras por página (afeta quanto texto é mostrado)
-  wordsPerPage: 150,
+  wordsPerPage: 130,
 };
 // === Fim das configurações === //
 
@@ -375,6 +376,7 @@ export async function extractEpubBook(entry: CatalogBook): Promise<BookExtractio
     file: entry.file,
     title: String(title || entry.file.replace(/\.epub$/i, '')),
     author: String(author || 'Autor desconhecido'),
+    paginationVersion: PAGINATION_VERSION,
     totalPages: pages.length,
     currentPageIndex: 0,
     progress: 0,

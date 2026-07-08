@@ -23,13 +23,13 @@
   --reader-text-muted: rgba(31, 26, 21, 0.56);
 
   /* Tipografia */
-  --reader-font-size: clamp(24px, 4.2vw, 31px);
-  --reader-line-height: 1.82;
-  --reader-letter-spacing: -0.008em;
+  --reader-font-size: clamp(18px, 4vw, 21px);
+  --reader-line-height: 1.42;
+  --reader-letter-spacing: 0;
 
   /* Layout */
-  --reader-side-margin: clamp(14px, 3.2vw, 34px);
-  --reader-bottom-bar-height: 40px;
+  --reader-side-margin: clamp(6px, 1.6vw, 12px);
+  --reader-bottom-bar-height: 52px;
 }
 
 * {
@@ -302,9 +302,9 @@ h1 {
 
 .reader-canvas {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   overflow-x: hidden;
-  padding: max(18px, env(safe-area-inset-top)) 0 0;
+  padding: 0;
   margin: 0;
   width: 100%;
   max-width: 100%;
@@ -330,10 +330,11 @@ h1 {
   text-justify: inter-word;
   hyphens: auto;
   
-  width: min(100%, 54rem);
-  padding: clamp(8px, 2vh, 20px) var(--reader-side-margin) calc(72px + env(safe-area-inset-bottom));
-  margin: 0 auto;
-  word-spacing: 0.03em;
+  width: 100%;
+  max-width: none;
+  padding: 0 var(--reader-side-margin) calc(60px + env(safe-area-inset-bottom));
+  margin: 0;
+  word-spacing: -0.01em;
   
   transition: filter 200ms ease-out;
 }
@@ -344,12 +345,9 @@ h1 {
 }
 
 .reader-paragraph {
-  margin: 0 0 0.92em;
+  margin: 0 0 0.7em;
   text-indent: 0;
-}
-
-.reader-paragraph:last-child {
-  margin-bottom: 0;
+  text-align: justify;
 }
 
 .word-token {
@@ -386,7 +384,7 @@ h1 {
   left: 0;
   right: 0;
   min-height: var(--reader-bottom-bar-height);
-  padding: 0 max(10px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) * 0.65) max(10px, env(safe-area-inset-left));
+  padding: 0 max(10px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) * 0.75) max(10px, env(safe-area-inset-left));
   background: linear-gradient(180deg, rgba(247, 241, 229, 0.28), rgba(239, 232, 219, 0.86));
   border-top: 1px solid rgba(31, 26, 21, 0.06);
   box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.24);
@@ -414,15 +412,15 @@ h1 {
 
 /* Botão hold-to-read */
 .reader-hold-button {
-  min-width: 28px;
-  height: 28px;
+  min-width: 34px;
+  height: 34px;
   padding: 0;
   
   border: 1px solid rgba(31, 26, 21, 0.09);
   background: rgba(255, 253, 248, 0.6);
   border-radius: 8px;
   
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -449,15 +447,15 @@ h1 {
 
 /* Botões de navegação */
 .reader-nav-button {
-  min-width: 28px;
-  height: 28px;
+  min-width: 34px;
+  height: 34px;
   padding: 0;
   
   border: 1px solid rgba(31, 26, 21, 0.09);
   background: rgba(255, 253, 248, 0.6);
   border-radius: 8px;
   
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -485,11 +483,11 @@ h1 {
   gap: 0;
   padding: 0 4px 0 10px;
   text-align: right;
-  min-width: 72px;
+  min-width: 80px;
 }
 
 .reader-page-number {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--reader-text);
   font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -515,21 +513,20 @@ h1 {
   }
   
   .reader-page-text {
-    width: min(100%, 48rem);
-    padding: 10px var(--reader-side-margin) calc(76px + env(safe-area-inset-bottom));
-    font-size: clamp(23px, 5.2vw, 30px);
-    line-height: 1.88;
+    padding: 0 var(--reader-side-margin) calc(64px + env(safe-area-inset-bottom));
+    font-size: clamp(17px, 4vw, 20px);
+    line-height: 1.38;
   }
   
   .reader-hold-button,
   .reader-nav-button {
-    min-width: 27px;
-    height: 27px;
-    font-size: 12px;
+    min-width: 34px;
+    height: 34px;
+    font-size: 13px;
   }
   
   .reader-page-number {
-    font-size: 10px;
+    font-size: 11px;
   }
   
   .reader-progress {

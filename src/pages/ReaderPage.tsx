@@ -11,8 +11,10 @@ import {
   getHighlights,
   getPagesForBook,
   saveBooks,
+  upsertBookPages,
   updateBookProgress,
 } from '../services/storage';
+import { PAGINATION_VERSION } from '../services/epub';
 import { formatPercent, getDayKey, nowIso, toLocalDateParts } from '../utils/date';
 import { normalizeWord } from '../utils/text';
 
@@ -63,7 +65,7 @@ export function ReaderPage() {
       let loadedBook = loadBookOrThrow(livro);
       let loadedPages = getPagesForBook(livro);
 
-      if (!loadedBook || loadedPages.length === 0) {
+      if (!loadedBook || loadedBook.paginationVersion !== PAGINATION_VERSION || loadedPages.length === 0) {
         const catalogResponse = await fetch(`${import.meta.env.BASE_URL}livros/index.json`);
         const catalog = (await catalogResponse.json()) as { id: string; file: string }[];
         const entry = catalog.find((item) => item.id === livro);
@@ -76,6 +78,7 @@ export function ReaderPage() {
         const extracted = await extractEpubBook(entry);
         loadedBook = extracted.book;
         loadedPages = extracted.pages;
+        upsertBookPages(livro, extracted.pages);
         saveBooks([...getBooks().filter((item) => item.id !== livro), extracted.book]);
       }
 

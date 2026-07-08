@@ -4,6 +4,7 @@ import { BookCover } from '../components/BookCover';
 import { StatCard } from '../components/StatCard';
 import { CatalogBook, StoredBook } from '../models/types';
 import { clearBookProgress, getBooks, getPagesForBook, saveBooks, upsertBookPages } from '../services/storage';
+import { PAGINATION_VERSION } from '../services/epub';
 import { formatDuration, formatLocalDateTime, formatPercent } from '../utils/date';
 
 async function fetchCatalog() {
@@ -53,7 +54,7 @@ export function BooksPage() {
       for (const entry of items) {
         const existing = getBooks().find((book) => book.id === entry.id);
         const pages = getPagesForBook(entry.id);
-        if (existing && pages.length > 0) {
+        if (existing && existing.paginationVersion === PAGINATION_VERSION && pages.length > 0) {
           results.push(existing);
           continue;
         }
@@ -72,6 +73,7 @@ export function BooksPage() {
               file: entry.file,
               title: entry.file.replace(/\.epub$/i, ''),
               author: 'Autor desconhecido',
+              paginationVersion: PAGINATION_VERSION,
               totalPages: 0,
               currentPageIndex: 0,
               progress: 0,
