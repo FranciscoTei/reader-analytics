@@ -94,7 +94,9 @@ async function readDeflatedData(data: Uint8Array) {
     throw new Error('DecompressionStream não disponível');
   }
 
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   const response = new Response(stream);
   const arrayBuffer = await response.arrayBuffer();
   return new Uint8Array(arrayBuffer);

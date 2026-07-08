@@ -32,10 +32,20 @@ export function splitIntoSentences(text: string) {
     return [];
   }
 
-  if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
-    const segmenter = new Intl.Segmenter('pt-BR', { granularity: 'sentence' });
-    const segments = Array.from(segmenter.segment(cleanText));
-    return segments.map((segment) => segment.segment.trim()).filter(Boolean);
+  const SegmenterCtor = (Intl as typeof Intl & {
+    Segmenter?: new (
+      locale: string,
+      options: { granularity: 'sentence' },
+    ) => {
+      segment(input: string): Iterable<{ segment: string }>;
+    };
+  }).Segmenter;
+
+  if (SegmenterCtor) {
+    const segmenter = new SegmenterCtor('pt-BR', { granularity: 'sentence' });
+    return Array.from(segmenter.segment(cleanText))
+      .map((segment: { segment: string }) => segment.segment.trim())
+      .filter(Boolean);
   }
 
   return cleanText
