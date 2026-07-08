@@ -1,6 +1,7 @@
 import {
   DailyStatRecord,
   HighlightRecord,
+  PageReadingStat,
   ReadingSession,
   SettingsRecord,
   StoredBook,
@@ -15,6 +16,7 @@ const storageKeys = {
   highlights: 'highlights',
   dictionary: 'dictionary',
   dailyStats: 'dailyStats',
+  pageReadingStats: 'pageReadingStats',
   settings: 'settings',
 } as const;
 
@@ -142,6 +144,14 @@ export function saveDailyStats(stats: Record<string, DailyStatRecord>) {
   writeJson(storageKeys.dailyStats, stats);
 }
 
+export function getPageReadingStats() {
+  return readJson<Record<string, PageReadingStat>>(storageKeys.pageReadingStats, {});
+}
+
+export function savePageReadingStats(stats: Record<string, PageReadingStat>) {
+  writeJson(storageKeys.pageReadingStats, stats);
+}
+
 export function getSettings() {
   return readJson<SettingsRecord>(storageKeys.settings, defaultSettings);
 }
@@ -219,6 +229,7 @@ export function getLocalStorageSnapshot() {
     highlights: getHighlights(),
     dictionary: getDictionary(),
     dailyStats: getDailyStats(),
+    pageReadingStats: getPageReadingStats(),
     settings: getSettings(),
   };
 }

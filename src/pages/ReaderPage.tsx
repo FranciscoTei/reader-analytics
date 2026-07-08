@@ -17,6 +17,9 @@ import {
 } from '../services/storage';
 import { formatPercent, getDayKey, nowIso, toLocalDateParts } from '../utils/date';
 import { normalizeWord } from '../utils/text';
+import {
+  isMeaningfulReadingSession,
+} from '../utils/analytics';
 
 interface RuntimeState {
   startedAt: number | null;
@@ -142,6 +145,18 @@ export function ReaderPage() {
     const endAt = Date.now();
     const durationMs = Math.max(0, endAt - runtime.startedAt);
     runtime.accumulatedMs += durationMs;
+    const shouldRecordSession = isMeaningfulReadingSession({
+      durationMs,
+      wordCount: currentPage.wordCount,
+    });
+
+    if (!shouldRecordSession) {
+      runtime.accumulatedMs = 0;
+      runtime.startedAt = null;
+      runtime.active = false;
+      runtime.pauses = 0;
+      return;
+    }
 
     const sessionDate = toLocalDateParts(new Date());
     addReadingSession({

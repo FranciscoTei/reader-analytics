@@ -46,26 +46,42 @@ function parseContainerRootFile(containerXml: string) {
   return match?.[1] ?? null;
 }
 
+interface ManifestEntry {
+  href: string;
+  mediaType: string;
+  properties: string;
+}
+
 function parseOpfMetadata(opfXml: string) {
   const titleMatch = opfXml.match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i);
   const creatorMatch = opfXml.match(/<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/i);
+  const dateMatch = opfXml.match(/<dc:date[^>]*>([\s\S]*?)<\/dc:date>/i);
+  const coverMetaMatch = opfXml.match(/<meta[^>]+name="cover"[^>]+content="([^"]+)"/i);
   const title = titleMatch ? stripTags(titleMatch[1]) : '';
   const author = creatorMatch ? stripTags(creatorMatch[1]) : '';
-  return { title, author };
+  const publishedAt = dateMatch ? stripTags(dateMatch[1]) : '';
+  const publicationYear = publishedAt.match(/\b(\d{4})\b/)?.[1] ?? '';
+  return { title, author, publishedAt, publicationYear, coverId: coverMetaMatch?.[1] ?? '' };
 }
 
 function parseManifestAndSpine(opfXml: string) {
-  const manifest = new Map<string, string>();
+  const manifest = new Map<string, ManifestEntry>();
   const itemMatches = Array.from(opfXml.matchAll(/<item\b[^>]*>/gi));
   itemMatches.forEach((match) => {
     const block = match[0];
     const idMatch = block.match(/id="([^"]+)"/i);
     const hrefMatch = block.match(/href="([^"]+)"/i);
+    const mediaTypeMatch = block.match(/media-type="([^"]+)"/i);
+    const propertiesMatch = block.match(/properties="([^"]+)"/i);
     if (!idMatch || !hrefMatch) {
       return;
     }
 
-    manifest.set(idMatch[1], hrefMatch[1]);
+    manifest.set(idMatch[1], {
+      href: hrefMatch[1],
+      mediaType: mediaTypeMatch?.[1] ?? '',
+      properties: propertiesMatch?.[1] ?? '',
+    });
   });
 
   const spineIds = Array.from(opfXml.matchAll(/<itemref\b[^>]*>/gi))
@@ -212,6 +228,11 @@ function readZipText(zip: ZipEntries, path: string) {
   return new TextDecoder('utf-8').decode(entry);
 }
 
+function readZipBytes(zip: ZipEntries, path: string) {
+  const entry = getZipEntry(zip, path);
+  return entry ? entry : null;
+}
+
 async function loadChapterHtml(zip: ZipEntries, basePath: string, href: string) {
   const resolvedPath = resolveZipPath(basePath, href);
   return readZipText(zip, resolvedPath);
@@ -238,6 +259,121 @@ function extractChapterText(document: Document | null) {
 
   const article = document.body?.innerText || document.body?.textContent || '';
   return normalizeText(article);
+}
+
+function guessMimeType(path: string) {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    return 'image/jpeg';
+  }
+  if (lower.endsWith('.png')) {
+    return 'image/png';
+  }
+  if (lower.endsWith('.gif')) {
+    return 'image/gif';
+  }
+  if (lower.endsWith('.webp')) {
+    return 'image/webp';
+  }
+  if (lower.endsWith('.svg') || lower.endsWith('.svgz')) {
+    return 'image/svg+xml';
+  }
+  return 'image/jpeg';
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bytesToDataUrl(bytes: Uint8Array, path: string) {
+  const mimeType = guessMimeType(path);
+  return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
+}
+
+async function extractInlineImageFromDocument(
+  zip: ZipEntries,
+  document: Document | null,
+  basePath: string,
+) {
+  if (!document) {
+    return null;
+  }
+
+  const image = document.querySelector('img[src]');
+  const src = image?.getAttribute('src')?.trim();
+  if (!src || src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
+    return src?.startsWith('data:') ? src : null;
+  }
+
+  const resolvedPath = resolveZipPath(basePath, src);
+  const bytes = readZipBytes(zip, resolvedPath);
+  if (!bytes) {
+    return null;
+  }
+
+  return bytesToDataUrl(bytes, resolvedPath);
+}
+
+async function extractCoverImage(
+  zip: ZipEntries,
+  rootFilePath: string,
+  manifest: Map<string, ManifestEntry>,
+  spineIds: string[],
+  coverId: string,
+) {
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+
+  if (coverId) {
+    const coverEntry = manifest.get(coverId);
+    if (coverEntry?.href) {
+      candidates.push(resolveZipPath(rootFilePath, coverEntry.href));
+    }
+  }
+
+  manifest.forEach((entry, id) => {
+    if (entry.mediaType.startsWith('image/') && (entry.properties.includes('cover-image') || id === coverId)) {
+      candidates.push(resolveZipPath(rootFilePath, entry.href));
+    }
+  });
+
+  manifest.forEach((entry) => {
+    if (entry.mediaType.startsWith('image/')) {
+      candidates.push(resolveZipPath(rootFilePath, entry.href));
+    }
+  });
+
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    const bytes = readZipBytes(zip, candidate);
+    if (bytes) {
+      return bytesToDataUrl(bytes, candidate);
+    }
+  }
+
+  for (const idref of spineIds) {
+    const entry = manifest.get(idref);
+    if (!entry) {
+      continue;
+    }
+
+    const html = await readZipText(zip, resolveZipPath(rootFilePath, entry.href));
+    const document = resolveDocument(html);
+    const inlineCover = await extractInlineImageFromDocument(zip, document, resolveZipPath(rootFilePath, entry.href));
+    if (inlineCover) {
+      return inlineCover;
+    }
+  }
+
+  return null;
 }
 
 function paginateChapters(bookId: string, chapters: BookChapter[]) {
@@ -312,12 +448,10 @@ export async function extractEpubBook(entry: CatalogBook): Promise<BookExtractio
   ];
 
   let zip: ZipEntries | null = null;
-  let usedUrl = '';
 
   for (const fileUrl of candidatePaths) {
     try {
       zip = await loadEpubArchive(fileUrl);
-      usedUrl = fileUrl;
       break;
     } catch (error) {
       if (fileUrl === candidatePaths[candidatePaths.length - 1]) {
@@ -343,13 +477,13 @@ export async function extractEpubBook(entry: CatalogBook): Promise<BookExtractio
   if (!opfXml) {
     throw new Error('EPUB sem package OPF');
   }
-  const { title, author } = parseOpfMetadata(opfXml);
+  const { title, author, publicationYear, coverId } = parseOpfMetadata(opfXml);
   const { manifest, spineIds } = parseManifestAndSpine(opfXml);
 
   const chapters: BookChapter[] = [];
   for (let index = 0; index < spineIds.length; index += 1) {
     const idref = spineIds[index];
-    const href = manifest.get(idref);
+    const href = manifest.get(idref)?.href;
     if (!href) {
       continue;
     }
@@ -370,12 +504,15 @@ export async function extractEpubBook(entry: CatalogBook): Promise<BookExtractio
   }
 
   const pages = paginateChapters(entry.id, chapters);
+  const cover = await extractCoverImage(zip, rootFilePath, manifest, spineIds, coverId);
   const timestamp = nowIso();
   const storedBook: StoredBook = {
     id: entry.id,
     file: entry.file,
     title: String(title || entry.file.replace(/\.epub$/i, '')),
     author: String(author || 'Autor desconhecido'),
+    cover: cover ?? undefined,
+    publicationYear: publicationYear || undefined,
     paginationVersion: PAGINATION_VERSION,
     totalPages: pages.length,
     currentPageIndex: 0,

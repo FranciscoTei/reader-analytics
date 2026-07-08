@@ -22,6 +22,7 @@ export interface StoredBook {
   title: string;
   author: string;
   cover?: string;
+  publicationYear?: string;
   paginationVersion?: number;
   totalPages: number;
   currentPageIndex: number;
@@ -50,6 +51,22 @@ export interface ReadingSession {
   endedAt: string;
   localDate: string;
   localTime: string;
+}
+
+export interface PageReadingStat {
+  id: string;
+  bookId: string;
+  bookTitle: string;
+  pageId: string;
+  pageNumber: number;
+  chapterTitle: string;
+  totalReadingTimeMs: number;
+  totalWords: number;
+  totalChars: number;
+  sessionCount: number;
+  longestSessionMs: number;
+  firstReadAt: string;
+  lastReadAt: string;
 }
 
 export interface HighlightRecord {

@@ -3,8 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { BookCover } from '../components/BookCover';
 import { StatCard } from '../components/StatCard';
 import { CatalogBook, StoredBook } from '../models/types';
+import { extractEpubBook, PAGINATION_VERSION } from '../services/epub';
 import { clearBookProgress, getBooks, getPagesForBook, saveBooks, upsertBookPages } from '../services/storage';
-import { PAGINATION_VERSION } from '../services/epub';
 import { formatDuration, formatLocalDateTime, formatPercent } from '../utils/date';
 
 async function fetchCatalog() {
@@ -29,6 +29,8 @@ function mergeMetadata(existing: StoredBook | undefined, incoming: StoredBook) {
     totalReadingTimeMs: existing.totalReadingTimeMs,
     totalWordsRead: existing.totalWordsRead,
     totalCharsRead: existing.totalCharsRead,
+    cover: existing.cover ?? incoming.cover,
+    publicationYear: existing.publicationYear ?? incoming.publicationYear,
     createdAt: existing.createdAt,
     updatedAt: existing.updatedAt,
   };
@@ -54,15 +56,13 @@ export function BooksPage() {
       for (const entry of items) {
         const existing = getBooks().find((book) => book.id === entry.id);
         const pages = getPagesForBook(entry.id);
-        if (existing && existing.paginationVersion === PAGINATION_VERSION && pages.length > 0) {
+        if (existing && existing.paginationVersion === PAGINATION_VERSION && pages.length > 0 && existing.cover && existing.publicationYear) {
           results.push(existing);
           continue;
         }
 
         try {
-          const modulePath = import.meta.env.DEV ? `../services/epub.ts?t=${Date.now()}` : '../services/epub';
-          const epubModule = await import(modulePath);
-          const extracted = await epubModule.extractEpubBook(entry);
+          const extracted = await extractEpubBook(entry);
           upsertBookPages(entry.id, extracted.pages);
           results.push(mergeMetadata(existing, extracted.book));
         } catch (error) {
@@ -73,6 +73,7 @@ export function BooksPage() {
               file: entry.file,
               title: entry.file.replace(/\.epub$/i, ''),
               author: 'Autor desconhecido',
+              publicationYear: undefined,
               paginationVersion: PAGINATION_VERSION,
               totalPages: 0,
               currentPageIndex: 0,

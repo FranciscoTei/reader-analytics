@@ -1,12 +1,12 @@
 import {
   DailyStatRecord,
   HighlightRecord,
+  PageReadingStat,
   ReadingSession,
   StoredBook,
-  StoredPageContent,
   WordDictionaryEntry,
 } from '../models/types';
-import { formatDuration, getDayKey, getTimeBucket, nowIso, toLocalDateParts } from './date';
+import { formatDuration, getDayKey } from './date';
 import { normalizeWord } from './text';
 
 export interface DerivedMetrics {
@@ -34,6 +34,53 @@ export interface DashboardInsight {
   detail: string;
 }
 
+export const MIN_READING_SESSION_DURATION_MS = 20_000;
+export const MIN_READING_SESSION_WORD_COUNT = 100;
+
+export function isMeaningfulReadingSession(
+  session: Pick<ReadingSession, 'durationMs' | 'wordCount'>,
+) {
+  return (
+    session.durationMs >= MIN_READING_SESSION_DURATION_MS &&
+    session.wordCount >= MIN_READING_SESSION_WORD_COUNT
+  );
+}
+
+export function filterMeaningfulReadingSessions(sessions: ReadingSession[]) {
+  return sessions.filter(isMeaningfulReadingSession);
+}
+
+function buildBookTotalsById(sessions: ReadingSession[]) {
+  return filterMeaningfulReadingSessions(sessions).reduce<
+    Record<string, { totalReadingTimeMs: number; totalWordsRead: number; totalCharsRead: number }>
+  >((acc, session) => {
+    acc[session.bookId] = acc[session.bookId] ?? {
+      totalReadingTimeMs: 0,
+      totalWordsRead: 0,
+      totalCharsRead: 0,
+    };
+
+    acc[session.bookId].totalReadingTimeMs += session.durationMs;
+    acc[session.bookId].totalWordsRead += session.wordCount;
+    acc[session.bookId].totalCharsRead += session.charCount;
+    return acc;
+  }, {});
+}
+
+export function reconcileBookTotalsFromSessions(books: StoredBook[], sessions: ReadingSession[]) {
+  const totalsByBook = buildBookTotalsById(sessions);
+
+  return books.map((book) => {
+    const totals = totalsByBook[book.id];
+    return {
+      ...book,
+      totalReadingTimeMs: totals?.totalReadingTimeMs ?? 0,
+      totalWordsRead: totals?.totalWordsRead ?? 0,
+      totalCharsRead: totals?.totalCharsRead ?? 0,
+    };
+  });
+}
+
 function emptyDailyStat(date: string): DailyStatRecord {
   return {
     date,
@@ -48,11 +95,11 @@ function emptyDailyStat(date: string): DailyStatRecord {
 export function aggregateDailyStats(
   sessions: ReadingSession[],
   highlights: HighlightRecord[],
-  pages: StoredPageContent[],
 ) {
   const stats: Record<string, DailyStatRecord> = {};
+  const meaningfulSessions = filterMeaningfulReadingSessions(sessions);
 
-  for (const session of sessions) {
+  for (const session of meaningfulSessions) {
     const day = session.localDate;
     stats[day] = stats[day] ?? emptyDailyStat(day);
     stats[day].readingTimeMs += session.durationMs;
@@ -67,8 +114,38 @@ export function aggregateDailyStats(
     stats[day].highlights += 1;
   }
 
-  for (const page of pages) {
-    stats[page.bookId] = stats[page.bookId] ?? emptyDailyStat(page.bookId);
+  return stats;
+}
+
+export function aggregatePageReadingStats(sessions: ReadingSession[]) {
+  const stats: Record<string, PageReadingStat> = {};
+  const meaningfulSessions = filterMeaningfulReadingSessions(sessions);
+
+  for (const session of meaningfulSessions) {
+    const current = stats[session.pageId] ?? {
+      id: session.pageId,
+      bookId: session.bookId,
+      bookTitle: session.bookTitle,
+      pageId: session.pageId,
+      pageNumber: session.pageNumber,
+      chapterTitle: session.chapterTitle,
+      totalReadingTimeMs: 0,
+      totalWords: 0,
+      totalChars: 0,
+      sessionCount: 0,
+      longestSessionMs: 0,
+      firstReadAt: session.startedAt,
+      lastReadAt: session.endedAt,
+    };
+
+    current.totalReadingTimeMs += session.durationMs;
+    current.totalWords += session.wordCount;
+    current.totalChars += session.charCount;
+    current.sessionCount += 1;
+    current.longestSessionMs = Math.max(current.longestSessionMs, session.durationMs);
+    current.firstReadAt = current.firstReadAt < session.startedAt ? current.firstReadAt : session.startedAt;
+    current.lastReadAt = current.lastReadAt > session.endedAt ? current.lastReadAt : session.endedAt;
+    stats[session.pageId] = current;
   }
 
   return stats;
@@ -109,42 +186,56 @@ export function buildDictionary(highlights: HighlightRecord[]) {
 export function rebuildDerivedData({
   sessions,
   highlights,
-  pages,
 }: {
   sessions: ReadingSession[];
   highlights: HighlightRecord[];
-  pages: StoredPageContent[];
 }) {
   const dictionary = buildDictionary(highlights);
-  const dailyStats = aggregateDailyStats(sessions, highlights, pages);
+  const dailyStats = aggregateDailyStats(sessions, highlights);
+  const pageReadingStats = aggregatePageReadingStats(sessions);
 
-  return { dictionary, dailyStats };
+  return { dictionary, dailyStats, pageReadingStats };
 }
 
 export function computeDerivedMetrics({
   books,
   sessions,
-  pages,
 }: {
   books: StoredBook[];
   sessions: ReadingSession[];
-  pages: StoredPageContent[];
 }) {
-  const totalReadingTimeMs = sessions.reduce((sum, session) => sum + session.durationMs, 0);
-  const totalPages = sessions.reduce((sum, session) => sum + 1, 0);
-  const totalWords = sessions.reduce((sum, session) => sum + session.wordCount, 0);
-  const totalChars = sessions.reduce((sum, session) => sum + session.charCount, 0);
-  const totalChapters = new Set(sessions.map((session) => `${session.bookId}:${session.chapterTitle}`)).size || 1;
+  const meaningfulSessions = filterMeaningfulReadingSessions(sessions);
+  const totalsByBook = buildBookTotalsById(meaningfulSessions);
+  const totalReadingTimeMs = meaningfulSessions.reduce((sum, session) => sum + session.durationMs, 0);
+  const totalPages = meaningfulSessions.reduce((sum, session) => sum + 1, 0);
+  const totalWords = meaningfulSessions.reduce((sum, session) => sum + session.wordCount, 0);
+  const totalChars = meaningfulSessions.reduce((sum, session) => sum + session.charCount, 0);
+  const totalChapters = new Set(meaningfulSessions.map((session) => `${session.bookId}:${session.chapterTitle}`)).size || 1;
   const totalMinutes = totalReadingTimeMs / 60000 || 1;
 
-  const mostReadBook = [...books].sort((a, b) => b.totalReadingTimeMs - a.totalReadingTimeMs)[0];
-  const fastestBook = [...books].sort((a, b) => {
+  const booksById = new Map(books.map((book) => [book.id, book]));
+  const enrichedBooks = Object.entries(totalsByBook)
+    .map(([bookId, totals]) => {
+      const book = booksById.get(bookId);
+      return book
+        ? {
+            ...book,
+            totalReadingTimeMs: totals.totalReadingTimeMs,
+            totalWordsRead: totals.totalWordsRead,
+            totalCharsRead: totals.totalCharsRead,
+          }
+        : null;
+    })
+    .filter((book): book is StoredBook => book !== null);
+
+  const mostReadBook = [...enrichedBooks].sort((a, b) => b.totalReadingTimeMs - a.totalReadingTimeMs)[0];
+  const fastestBook = [...enrichedBooks].sort((a, b) => {
     const aRate = a.totalReadingTimeMs > 0 ? a.totalWordsRead / (a.totalReadingTimeMs / 60000) : 0;
     const bRate = b.totalReadingTimeMs > 0 ? b.totalWordsRead / (b.totalReadingTimeMs / 60000) : 0;
     return bRate - aRate;
   })[0];
 
-  const dayKeys = Array.from(new Set(sessions.map((session) => session.localDate))).sort();
+  const dayKeys = Array.from(new Set(meaningfulSessions.map((session) => session.localDate))).sort();
   const longestStreakDays = dayKeys.reduce((best, day, index) => {
     if (index === 0) {
       return 1;
@@ -215,8 +306,9 @@ export function generateInsights({
   derived: DerivedMetrics;
 }) {
   const insights: DashboardInsight[] = [];
+  const meaningfulSessions = filterMeaningfulReadingSessions(sessions);
 
-  const byHour = sessions.reduce<Record<string, ReadingSession[]>>((acc, session) => {
+  const byHour = meaningfulSessions.reduce<Record<string, ReadingSession[]>>((acc, session) => {
     const hour = new Date(session.startedAt).getHours();
     const bucket = hour >= 5 && hour < 12 ? 'manhã' : hour >= 12 && hour < 18 ? 'tarde' : 'noite';
     acc[bucket] = acc[bucket] ?? [];
@@ -234,7 +326,7 @@ export function generateInsights({
     });
   }
 
-  const chapterTotals = sessions.reduce<Record<string, { time: number; words: number; title: string }>>((acc, session) => {
+  const chapterTotals = meaningfulSessions.reduce<Record<string, { time: number; words: number; title: string }>>((acc, session) => {
     const key = `${session.bookId}:${session.chapterTitle}`;
     acc[key] = acc[key] ?? { time: 0, words: 0, title: session.chapterTitle };
     acc[key].time += session.durationMs;
@@ -264,8 +356,8 @@ export function generateInsights({
     detail: `Você marcou ${uniqueRecentWords.size} palavras diferentes nos últimos 30 dias.`,
   });
 
-  const recent30 = sumByDateRange(sessions, 30);
-  const previous30 = sessions.filter((session) => {
+  const recent30 = sumByDateRange(meaningfulSessions, 30);
+  const previous30 = meaningfulSessions.filter((session) => {
     const sessionDate = new Date(`${session.localDate}T12:00:00`);
     const now = new Date();
     const thirtyDaysAgo = new Date();
@@ -305,10 +397,15 @@ export function generateInsights({
 }
 
 export function buildWeeklyChartData(sessions: ReadingSession[]) {
+  return buildDateSeriesData(sessions, 7);
+}
+
+function buildDateSeriesData(sessions: ReadingSession[], daysBack: number) {
   const map = new Map<string, { date: string; time: number; pages: number; words: number }>();
-  const days = Array.from({ length: 7 }, (_, index) => {
+  const meaningfulSessions = filterMeaningfulReadingSessions(sessions);
+  const days = Array.from({ length: daysBack }, (_, index) => {
     const date = new Date();
-    date.setDate(date.getDate() - (6 - index));
+    date.setDate(date.getDate() - ((daysBack - 1) - index));
     return getDayKey(date);
   });
 
@@ -316,7 +413,7 @@ export function buildWeeklyChartData(sessions: ReadingSession[]) {
     map.set(day, { date: day, time: 0, pages: 0, words: 0 });
   }
 
-  for (const session of sessions) {
+  for (const session of meaningfulSessions) {
     const item = map.get(session.localDate) ?? { date: session.localDate, time: 0, pages: 0, words: 0 };
     item.time += session.durationMs / 60000;
     item.pages += 1;
@@ -327,8 +424,25 @@ export function buildWeeklyChartData(sessions: ReadingSession[]) {
   return Array.from(map.values());
 }
 
-export function buildBookRanking(books: StoredBook[]) {
+export function buildMonthlyChartData(sessions: ReadingSession[]) {
+  return buildDateSeriesData(sessions, 30);
+}
+
+export function buildBookRanking(books: StoredBook[], sessions?: ReadingSession[]) {
+  const totalsByBook = sessions ? buildBookTotalsById(sessions) : null;
+
   return [...books]
+    .map((book) => {
+      const totals = totalsByBook?.[book.id];
+      return totals
+        ? {
+            ...book,
+            totalReadingTimeMs: totals.totalReadingTimeMs,
+            totalWordsRead: totals.totalWordsRead,
+            totalCharsRead: totals.totalCharsRead,
+          }
+        : book;
+    })
     .sort((a, b) => b.totalReadingTimeMs - a.totalReadingTimeMs)
     .map((book) => ({
       id: book.id,
@@ -339,5 +453,24 @@ export function buildBookRanking(books: StoredBook[]) {
       words: book.totalWordsRead,
       chars: book.totalCharsRead,
       totalPages: book.totalPages,
+    }));
+}
+
+export function buildPageRanking(sessions: ReadingSession[]) {
+  return Object.values(aggregatePageReadingStats(sessions))
+    .sort((a, b) => b.totalReadingTimeMs - a.totalReadingTimeMs)
+    .map((page) => ({
+      id: page.id,
+      bookId: page.bookId,
+      bookTitle: page.bookTitle,
+      pageNumber: page.pageNumber,
+      chapterTitle: page.chapterTitle,
+      time: page.totalReadingTimeMs,
+      words: page.totalWords,
+      chars: page.totalChars,
+      visits: page.sessionCount,
+      longestSessionMs: page.longestSessionMs,
+      firstReadAt: page.firstReadAt,
+      lastReadAt: page.lastReadAt,
     }));
 }
